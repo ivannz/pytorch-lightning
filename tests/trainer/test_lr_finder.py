@@ -57,9 +57,8 @@ def test_trainer_reset_correctly(tmpdir):
     )
 
     changed_attributes = ['callbacks', 'logger', 'max_steps', 'auto_lr_find',
-                          'progress_bar_refresh_rate', 'early_stop_callback',
-                          'accumulate_grad_batches', 'enable_early_stop',
-                          'checkpoint_callback']
+                          'early_stop_callback', 'accumulate_grad_batches',
+                          'enable_early_stop', 'checkpoint_callback']
     attributes_before = {}
     for ca in changed_attributes:
         attributes_before[ca] = getattr(trainer, ca)
@@ -199,3 +198,26 @@ def test_suggestion_with_non_finite_values(tmpdir):
 
     assert before_lr == after_lr, \
         'Learning rate was altered because of non-finite loss values'
+
+
+def test_logger_reset_correctly(tmpdir):
+    """ Test that logger is updated correctly """
+    tutils.reset_seed()
+
+    hparams = EvalModelTemplate.get_default_hparams()
+    model = EvalModelTemplate(hparams)
+
+    trainer = Trainer(
+        default_save_path=tmpdir,
+        max_epochs=10,
+        auto_lr_find=True
+    )
+    logger1 = trainer.logger
+    trainer.fit(model)
+    logger2 = trainer.logger
+    logger3 = model.logger
+
+    assert logger1 == logger2, \
+        'Learning rate finder altered the logger of trainer'
+    assert logger2 == logger3, \
+        'Learning rate finder altered the logger of model'

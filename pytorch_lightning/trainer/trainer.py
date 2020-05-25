@@ -130,7 +130,6 @@ class Trainer(
             reload_dataloaders_every_epoch: bool = False,
             auto_lr_find: Union[bool, str] = False,
             replace_sampler_ddp: bool = True,
-            progress_bar_callback: Optional[Union[ProgressBarBase, bool]] = True,
             terminate_on_nan: bool = False,
             auto_scale_batch_size: Union[str, bool] = False,
             num_tpu_cores: Optional[int] = None,  # backward compatible, todo: remove in v0.9.0
@@ -364,7 +363,6 @@ class Trainer(
             rank_zero_warn("num_processes is only used for distributed_backend=\"ddp_cpu\". Ignoring it.")
         self.num_processes = num_processes
 
-        self.process_position = process_position
         self.weights_summary = weights_summary
 
         self.max_epochs = max_epochs
@@ -401,6 +399,7 @@ class Trainer(
 
         self.auto_lr_find = auto_lr_find
         self.auto_scale_batch_size = auto_scale_batch_size
+        self._is_data_prepared = False
         self.replace_sampler_ddp = replace_sampler_ddp
 
         self.truncated_bptt_steps = truncated_bptt_steps
@@ -505,9 +504,7 @@ class Trainer(
         if show_progress_bar is not None:
             self.show_progress_bar = show_progress_bar
 
-        self.progress_bar_refresh_rate = progress_bar_refresh_rate
-        self.progress_bar_callback = progress_bar_callback
-        self.configure_progress_bar()
+        self._progress_bar_callback = self.configure_progress_bar(progress_bar_refresh_rate, process_position)
 
         # logging
         self.log_save_interval = log_save_interval
@@ -660,7 +657,6 @@ class Trainer(
              'min_steps': None,
              ...
              'profiler': None,
-             'progress_bar_callback': True,
              'progress_bar_refresh_rate': 1,
              ...}
 
@@ -756,6 +752,10 @@ class Trainer(
         return self.use_dp or self.use_ddp or self.use_ddp2
 
     @property
+    def progress_bar_callback(self):
+        return self._progress_bar_callback
+
+    @property
     def progress_bar_dict(self) -> dict:
         """ Read-only for progress bar metrics. """
         ref_model = self.model if not self.data_parallel else self.model.module
@@ -823,17 +823,21 @@ class Trainer(
         # download the data and do whatever transforms we need
         # do before any spawn calls so that the model can assign properties
         # only on proc 0 because no spawn has happened yet
-        model.prepare_data()
+        if not self._is_data_prepared:
+            model.prepare_data()
+            self._is_data_prepared = True
 
         # Run auto batch size scaling
         if self.auto_scale_batch_size:
             if isinstance(self.auto_scale_batch_size, bool):
                 self.auto_scale_batch_size = 'power'
             self.scale_batch_size(model, mode=self.auto_scale_batch_size)
+            model.logger = self.logger  # reset logger binding
 
         # Run learning rate finder:
         if self.auto_lr_find:
             self._run_lr_finder_internally(model)
+            model.logger = self.logger  # reset logger binding
 
         # route to appropriate start method
         # when using multi-node or DDP within a node start each module in a separate process
